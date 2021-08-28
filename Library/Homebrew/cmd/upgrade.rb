@@ -8,7 +8,7 @@ require "upgrade"
 require "cask/cmd"
 require "cask/utils"
 require "cask/macos"
-require "bottle_api"
+require "api"
 
 module Homebrew
   extend T::Sig
@@ -163,9 +163,9 @@ module Homebrew
     if ENV["HOMEBREW_JSON_CORE"].present?
       formulae_to_install.map! do |formula|
         next formula if formula.tap.present? && !formula.core_formula?
-        next formula unless BottleAPI.bottle_available?(formula.name)
+        next formula unless Homebrew::API::Bottle.available?(formula.name)
 
-        BottleAPI.fetch_bottles(formula.name)
+        Homebrew::API::Bottle.fetch_bottles(formula.name)
         Formulary.factory(formula.name)
       rescue FormulaUnavailableError
         formula
@@ -224,6 +224,15 @@ module Homebrew
   sig { params(casks: T::Array[Cask::Cask], args: CLI::Args).returns(T::Boolean) }
   def upgrade_outdated_casks(casks, args:)
     return false if args.formula?
+
+    if ENV["HOMEBREW_JSON_CORE"].present?
+      casks = casks.map do |cask|
+        next cask if cask.tap.present? && cask.tap != "homebrew/cask"
+        next cask unless Homebrew::API::CaskSource.available?(cask.token)
+
+        Cask::CaskLoader.load Homebrew::API::CaskSource.fetch(cask.token)
+      end
+    end
 
     Cask::Cmd::Upgrade.upgrade_casks(
       *casks,

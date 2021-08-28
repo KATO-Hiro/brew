@@ -12,7 +12,7 @@ require "cask/cmd"
 require "cask/utils"
 require "cask/macos"
 require "upgrade"
-require "bottle_api"
+require "api"
 
 module Homebrew
   extend T::Sig
@@ -85,14 +85,17 @@ module Homebrew
   def reinstall
     args = reinstall_args.parse
 
+    # We need to use the bottle API instead of just using the formula file
+    # from an installed keg because it will not contain bottle information.
+    # As a consequence, `brew reinstall` will also upgrade outdated formulae
     if ENV["HOMEBREW_JSON_CORE"].present?
       args.named.each do |name|
         formula = Formulary.factory(name)
         next unless formula.any_version_installed?
         next if formula.tap.present? && !formula.core_formula?
-        next unless BottleAPI.bottle_available?(name)
+        next unless Homebrew::API::Bottle.available?(name)
 
-        BottleAPI.fetch_bottles(name)
+        Homebrew::API::Bottle.fetch_bottles(name)
       rescue FormulaUnavailableError
         next
       end

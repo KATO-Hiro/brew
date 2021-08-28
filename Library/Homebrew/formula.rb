@@ -29,7 +29,7 @@ require "mktemp"
 require "find"
 require "utils/spdx"
 require "extend/on_os"
-require "bottle_api"
+require "api"
 
 # A formula provides instructions and metadata for Homebrew to install a piece
 # of software. Every Homebrew formula is a {Formula}.
@@ -520,7 +520,14 @@ class Formula
   # exists and is not empty.
   # @private
   def latest_version_installed?
-    (dir = latest_installed_prefix).directory? && !dir.children.empty?
+    latest_prefix = if ENV["HOMEBREW_JSON_CORE"].present? &&
+                       (latest_pkg_version = Homebrew::API::Versions.latest_formula_version(name))
+      prefix latest_pkg_version
+    else
+      latest_installed_prefix
+    end
+
+    (dir = latest_prefix).directory? && !dir.children.empty?
   end
 
   # If at least one version of {Formula} is installed.
@@ -980,13 +987,13 @@ class Formula
   # The generated launchd {.plist} file path.
   sig { returns(Pathname) }
   def plist_path
-    prefix/"#{plist_name}.plist"
+    opt_prefix/"#{plist_name}.plist"
   end
 
   # The generated systemd {.service} file path.
   sig { returns(Pathname) }
   def systemd_service_path
-    prefix/"#{service_name}.service"
+    opt_prefix/"#{service_name}.service"
   end
 
   # The service specification of the software.
@@ -1334,7 +1341,7 @@ class Formula
       all_kegs = []
       current_version = T.let(false, T::Boolean)
       latest_version = if ENV["HOMEBREW_JSON_CORE"].present? && (core_formula? || tap.blank?)
-        BottleAPI.latest_pkg_version(name) || pkg_version
+        Homebrew::API::Versions.latest_formula_version(name) || pkg_version
       else
         pkg_version
       end
@@ -1473,9 +1480,9 @@ class Formula
   end
 
   # Standard parameters for cargo builds.
-  sig { returns(T::Array[T.any(String, Pathname)]) }
-  def std_cargo_args
-    ["--locked", "--root", prefix, "--path", "."]
+  sig { params(root: T.any(String, Pathname), path: String).returns(T::Array[T.any(String, Pathname)]) }
+  def std_cargo_args(root: prefix, path: ".")
+    ["--locked", "--root", root, "--path", path]
   end
 
   # Standard parameters for CMake builds.
@@ -1483,13 +1490,19 @@ class Formula
   # Setting `CMAKE_FIND_FRAMEWORK` to "LAST" tells CMake to search for our
   # libraries before trying to utilize Frameworks, many of which will be from
   # 3rd party installs.
-  sig { returns(T::Array[String]) }
-  def std_cmake_args
+  sig {
+    params(
+      install_prefix: T.any(String, Pathname),
+      install_libdir: String,
+      find_framework: String,
+    ).returns(T::Array[String])
+  }
+  def std_cmake_args(install_prefix: prefix, install_libdir: "lib", find_framework: "LAST")
     args = %W[
-      -DCMAKE_INSTALL_PREFIX=#{prefix}
-      -DCMAKE_INSTALL_LIBDIR=lib
+      -DCMAKE_INSTALL_PREFIX=#{install_prefix}
+      -DCMAKE_INSTALL_LIBDIR=#{install_libdir}
       -DCMAKE_BUILD_TYPE=Release
-      -DCMAKE_FIND_FRAMEWORK=LAST
+      -DCMAKE_FIND_FRAMEWORK=#{find_framework}
       -DCMAKE_VERBOSE_MAKEFILE=ON
       -Wno-dev
       -DBUILD_TESTING=OFF
@@ -1575,6 +1588,39 @@ class Formula
       Time.now.utc
     end
   end
+
+  # Replaces a universal binary with its native slice.
+  #
+  # If called with no parameters, does this with all compatible
+  # universal binaries in a {Formula}'s {Keg}.
+  sig { params(targets: T.nilable(T.any(Pathname, String))).void }
+  def deuniversalize_machos(*targets)
+    targets = nil if targets.blank?
+    targets ||= any_installed_keg.mach_o_files.select do |file|
+      file.arch == :universal && file.archs.include?(Hardware::CPU.arch)
+    end
+
+    targets.each { |t| extract_macho_slice_from(Pathname.new(t), Hardware::CPU.arch) }
+  end
+
+  # @private
+  sig { params(file: Pathname, arch: T.nilable(Symbol)).void }
+  def extract_macho_slice_from(file, arch = Hardware::CPU.arch)
+    odebug "Extracting #{arch} slice from #{file}"
+    file.ensure_writable do
+      macho = MachO::FatFile.new(file)
+      native_slice = macho.extract(Hardware::CPU.arch)
+      native_slice.write file
+      MachO.codesign! file if Hardware::CPU.arm?
+    rescue MachO::MachOBinaryError
+      onoe "#{file} is not a universal binary"
+      raise
+    rescue NoMethodError
+      onoe "#{file} does not contain an #{arch} slice"
+      raise
+    end
+  end
+  private :extract_macho_slice_from
 
   # an array of all core {Formula} names
   # @private
@@ -1989,7 +2035,7 @@ class Formula
     bottle_spec.collector.each_key do |os|
       collector_os = bottle_spec.collector[os]
       os_cellar = collector_os[:cellar]
-      os_cellar = os_cellar.is_a?(Symbol) ? os_cellar.inspect : os_cellar
+      os_cellar = os_cellar.inspect if os_cellar.is_a?(Symbol)
 
       checksum = collector_os[:checksum].hexdigest
       filename = Bottle::Filename.create(self, os, bottle_spec.rebuild)
@@ -3009,6 +3055,13 @@ class Formula
             EOS
             T.cast(self, PourBottleCheck).satisfy { MacOS::CLT.installed? }
           end
+        end
+      when :default_prefix
+        lambda do |_|
+          T.cast(self, PourBottleCheck).reason(+<<~EOS)
+            The bottle needs to be installed into #{Homebrew::DEFAULT_PREFIX}.
+          EOS
+          T.cast(self, PourBottleCheck).satisfy { HOMEBREW_PREFIX.to_s == Homebrew::DEFAULT_PREFIX }
         end
       else
         raise ArgumentError, "Invalid preset `pour_bottle?` condition" if only_if.present?

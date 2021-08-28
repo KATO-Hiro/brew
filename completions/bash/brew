@@ -124,6 +124,7 @@ _brew___cache() {
   case "${cur}" in
     -*)
       __brewcomp "
+      --HEAD
       --build-from-source
       --cask
       --debug
@@ -282,6 +283,7 @@ _brew__s() {
       --opensuse
       --pull-request
       --quiet
+      --repology
       --ubuntu
       --verbose
       "
@@ -743,6 +745,23 @@ _brew_desc() {
     *)
   esac
   __brew_complete_formulae
+}
+
+_brew_developer() {
+  local cur="${COMP_WORDS[COMP_CWORD]}"
+  case "${cur}" in
+    -*)
+      __brewcomp "
+      --debug
+      --help
+      --quiet
+      --verbose
+      "
+      return
+      ;;
+    *)
+  esac
+  __brewcomp "state on off"
 }
 
 _brew_dispatch_build_bottle() {
@@ -1461,6 +1480,8 @@ _brew_outdated() {
       --fetch-HEAD
       --formula
       --greedy
+      --greedy-auto-updates
+      --greedy-latest
       --help
       --json
       --quiet
@@ -1517,6 +1538,7 @@ _brew_pr_automerge() {
       --debug
       --help
       --ignore-failures
+      --no-autosquash
       --publish
       --quiet
       --tap
@@ -1541,6 +1563,7 @@ _brew_pr_publish() {
       --debug
       --help
       --message
+      --no-autosquash
       --quiet
       --tap
       --verbose
@@ -1798,6 +1821,7 @@ _brew_search() {
       --opensuse
       --pull-request
       --quiet
+      --repology
       --ubuntu
       --verbose
       "
@@ -2312,6 +2336,8 @@ _brew_upgrade() {
       --force-bottle
       --formula
       --greedy
+      --greedy-auto-updates
+      --greedy-latest
       --help
       --ignore-pinned
       --input-methoddir
@@ -2442,6 +2468,7 @@ _brew() {
     create) _brew_create ;;
     deps) _brew_deps ;;
     desc) _brew_desc ;;
+    developer) _brew_developer ;;
     dispatch-build-bottle) _brew_dispatch_build_bottle ;;
     doctor) _brew_doctor ;;
     dr) _brew_dr ;;
