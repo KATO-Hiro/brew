@@ -1,21 +1,32 @@
-# typed: true
+# typed: true # rubocop:todo Sorbet/StrictSigil
 # frozen_string_literal: true
 
 require "development_tools"
 require "cask/exceptions"
+require "system_command"
 
 module Cask
   # Helper module for quarantining files.
-  #
-  # @api private
   module Quarantine
+    extend SystemCommand::Mixin
+
     QUARANTINE_ATTRIBUTE = "com.apple.quarantine"
 
     QUARANTINE_SCRIPT = (HOMEBREW_LIBRARY_PATH/"cask/utils/quarantine.swift").freeze
     COPY_XATTRS_SCRIPT = (HOMEBREW_LIBRARY_PATH/"cask/utils/copy-xattrs.swift").freeze
 
     def self.swift
-      @swift ||= DevelopmentTools.locate("swift")
+      @swift ||= begin
+        # /usr/bin/swift (which runs via xcrun) adds `/usr/local/include` to the top of the include path,
+        # which allows really broken local setups to break our Swift usage here. Using the underlying
+        # Swift executable directly however (returned by `xcrun -find`) avoids this CPATH mess.
+        xcrun_swift = ::Utils.popen_read("/usr/bin/xcrun", "-find", "swift", err: :close).chomp
+        if $CHILD_STATUS.success? && File.executable?(xcrun_swift)
+          xcrun_swift
+        else
+          DevelopmentTools.locate("swift")
+        end
+      end
     end
     private_class_method :swift
 
@@ -33,7 +44,7 @@ module Cask
     def self.check_quarantine_support
       odebug "Checking quarantine support"
 
-      if !system_command(xattr, args: ["-h"], print_stderr: false).success?
+      if xattr.nil? || !system_command(xattr, args: ["-h"], print_stderr: false).success?
         odebug "There's no working version of `xattr` on this system."
         :xattr_broken
       elsif swift.nil?
@@ -174,11 +185,11 @@ module Cask
       raise CaskQuarantinePropagationError.new(to, quarantiner.stderr)
     end
 
-    sig { params(from: Pathname, to: Pathname).void }
-    def self.copy_xattrs(from, to)
+    sig { params(from: Pathname, to: Pathname, command: T.class_of(SystemCommand)).void }
+    def self.copy_xattrs(from, to, command:)
       odebug "Copying xattrs from #{from} to #{to}"
 
-      system_command!(
+      command.run!(
         swift,
         args: [
           *swift_target_args,
@@ -205,11 +216,11 @@ module Cask
       # including both file ownership and whether system permissions are granted.
       # Here we just want to check whether sudo would be needed.
       looks_writable_without_sudo = if app.owned?
-        (app.lstat.mode & 0200) != 0
+        app.lstat.mode.anybits?(0200)
       elsif app.grpowned?
-        (app.lstat.mode & 0020) != 0
+        app.lstat.mode.anybits?(0020)
       else
-        (app.lstat.mode & 0002) != 0
+        app.lstat.mode.anybits?(0002)
       end
 
       if looks_writable_without_sudo
@@ -255,3 +266,5 @@ module Cask
     end
   end
 end
+
+require "extend/os/cask/quarantine"

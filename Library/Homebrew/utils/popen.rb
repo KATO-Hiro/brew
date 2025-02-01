@@ -1,4 +1,4 @@
-# typed: true
+# typed: true # rubocop:todo Sorbet/StrictSigil
 # frozen_string_literal: true
 
 module Utils
@@ -50,7 +50,7 @@ module Utils
 
         yield pipe
       else
-        options[:err] ||= "/dev/null" unless ENV["HOMEBREW_STDERR"]
+        options[:err] ||= File::NULL unless ENV["HOMEBREW_STDERR"]
         begin
           exec(*args, options)
         rescue Errno::ENOENT

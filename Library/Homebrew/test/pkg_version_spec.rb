@@ -2,7 +2,7 @@
 
 require "pkg_version"
 
-describe PkgVersion do
+RSpec.describe PkgVersion do
   describe "::parse" do
     it "parses versions from a string" do
       expect(described_class.parse("1.0_1")).to eq(described_class.new(Version.new("1.0"), 1))
@@ -15,7 +15,7 @@ describe PkgVersion do
   end
 
   specify "#==" do
-    expect(described_class.parse("1.0_0")).to be == described_class.parse("1.0")
+    expect(described_class.parse("1.0_0")).to eq described_class.parse("1.0")
     version_to_compare = described_class.parse("1.0_1")
     expect(version_to_compare == described_class.parse("1.0_1")).to be true
     expect(version_to_compare == described_class.parse("1.0_2")).to be false
@@ -33,13 +33,13 @@ describe PkgVersion do
     it "raises an error if the other side isn't of the same class" do
       expect do
         described_class.new(Version.new("1.0"), 0) > Object.new
-      end.to raise_error(ArgumentError)
+      end.to raise_error(TypeError)
     end
 
     it "is not compatible with Version" do
       expect do
         described_class.new(Version.new("1.0"), 0) > Version.new("1.0")
-      end.to raise_error(ArgumentError)
+      end.to raise_error(TypeError)
     end
   end
 
@@ -55,12 +55,7 @@ describe PkgVersion do
 
   describe "#<=>" do
     it "returns nil if the comparison fails" do
-      expect(described_class.new(Version.new("1.0"), 0) <=> Object.new).to be_nil
       expect(Object.new <=> described_class.new(Version.new("1.0"), 0)).to be_nil
-      expect(Object.new <=> described_class.new(Version.new("1.0"), 0)).to be_nil
-      expect(described_class.new(Version.new("1.0"), 0) <=> nil).to be_nil
-      # This one used to fail due to dereferencing a null `self`
-      expect(described_class.new(nil, 0) <=> described_class.new(Version.new("1.0"), 0)).to be_nil
     end
   end
 
@@ -89,43 +84,43 @@ describe PkgVersion do
 
   describe "#version" do
     it "returns package version" do
-      expect(described_class.parse("1.2.3_4").version).to be == Version.new("1.2.3")
+      expect(described_class.parse("1.2.3_4").version).to eq Version.new("1.2.3")
     end
   end
 
   describe "#revision" do
     it "returns package revision" do
-      expect(described_class.parse("1.2.3_4").revision).to be == 4
+      expect(described_class.parse("1.2.3_4").revision).to eq 4
     end
   end
 
   describe "#major" do
     it "returns major version token" do
-      expect(described_class.parse("1.2.3_4").major).to be == Version::Token.create("1")
+      expect(described_class.parse("1.2.3_4").major).to eq Version::Token.create("1")
     end
   end
 
   describe "#minor" do
     it "returns minor version token" do
-      expect(described_class.parse("1.2.3_4").minor).to be == Version::Token.create("2")
+      expect(described_class.parse("1.2.3_4").minor).to eq Version::Token.create("2")
     end
   end
 
   describe "#patch" do
     it "returns patch version token" do
-      expect(described_class.parse("1.2.3_4").patch).to be == Version::Token.create("3")
+      expect(described_class.parse("1.2.3_4").patch).to eq Version::Token.create("3")
     end
   end
 
   describe "#major_minor" do
     it "returns major.minor version" do
-      expect(described_class.parse("1.2.3_4").major_minor).to be == Version.new("1.2")
+      expect(described_class.parse("1.2.3_4").major_minor).to eq Version.new("1.2")
     end
   end
 
   describe "#major_minor_patch" do
     it "returns major.minor.patch version" do
-      expect(described_class.parse("1.2.3_4").major_minor_patch).to be == Version.new("1.2.3")
+      expect(described_class.parse("1.2.3_4").major_minor_patch).to eq Version.new("1.2.3")
     end
   end
 end

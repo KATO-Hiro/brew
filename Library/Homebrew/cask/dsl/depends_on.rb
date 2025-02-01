@@ -1,4 +1,4 @@
-# typed: true
+# typed: true # rubocop:todo Sorbet/StrictSigil
 # frozen_string_literal: true
 
 require "delegate"
@@ -8,8 +8,6 @@ require "requirements/macos_requirement"
 module Cask
   class DSL
     # Class corresponding to the `depends_on` stanza.
-    #
-    # @api private
     class DependsOn < SimpleDelegator
       VALID_KEYS = Set.new([
         :formula,
@@ -65,6 +63,7 @@ module Cask
             MacOSRequirement.new([T.must(md[:version]).to_sym], comparator: md[:comparator])
           elsif (md = /^\s*(?<comparator><|>|[=<>]=)\s*(?<version>\S+)\s*$/.match(first_arg))
             MacOSRequirement.new([md[:version]], comparator: md[:comparator])
+          # This is not duplicate of the first case: see `args.first` and a different comparator.
           else # rubocop:disable Lint/DuplicateBranch
             MacOSRequirement.new([args.first], comparator: "==")
           end

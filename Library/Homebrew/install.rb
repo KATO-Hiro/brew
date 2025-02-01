@@ -1,4 +1,4 @@
-# typed: true
+# typed: true # rubocop:todo Sorbet/StrictSigil
 # frozen_string_literal: true
 
 require "diagnostic"
@@ -9,19 +9,26 @@ require "upgrade"
 
 module Homebrew
   # Helper module for performing (pre-)install checks.
-  #
-  # @api private
   module Install
     class << self
-      def perform_preinstall_checks(all_fatal: false, cc: nil)
-        check_prefix
-        check_cpu
-        attempt_directory_creation
-        check_cc_argv(cc)
-        Diagnostic.checks(:supported_configuration_checks, fatal: all_fatal)
-        Diagnostic.checks(:fatal_preinstall_checks)
+      sig { params(all_fatal: T::Boolean).void }
+      def perform_preinstall_checks_once(all_fatal: false)
+        @perform_preinstall_checks_once ||= {}
+        @perform_preinstall_checks_once[all_fatal] ||= begin
+          perform_preinstall_checks(all_fatal:)
+          true
+        end
       end
-      alias generic_perform_preinstall_checks perform_preinstall_checks
+
+      def check_cc_argv(cc)
+        return unless cc
+
+        @checks ||= Diagnostic::Checks.new
+        opoo <<~EOS
+          You passed `--cc=#{cc}`.
+          #{@checks.please_create_pull_requests}
+        EOS
+      end
 
       def perform_build_from_source_checks(all_fatal: false)
         Diagnostic.checks(:fatal_build_from_source_checks)
@@ -62,7 +69,9 @@ module Homebrew
         fetch_head: false,
         only_dependencies: false,
         force: false,
-        quiet: false
+        quiet: false,
+        skip_link: false,
+        overwrite: false
       )
         # head-only without --HEAD is an error
         if !head && formula.stable.nil?
@@ -78,7 +87,7 @@ module Homebrew
 
         installed_head_version = formula.latest_head_version
         if installed_head_version &&
-           !formula.head_version_outdated?(installed_head_version, fetch_head: fetch_head)
+           !formula.head_version_outdated?(installed_head_version, fetch_head:)
           new_head_installed = true
         end
         prefix_installed = formula.prefix.exist? && !formula.prefix.children.empty?
@@ -87,7 +96,7 @@ module Homebrew
           # keg-only install is only possible when no other version is
           # linked to opt, because installing without any warnings can break
           # dependencies. Therefore before performing other checks we need to be
-          # sure --force flag is passed.
+          # sure the --force switch is passed.
           if formula.outdated?
             if !Homebrew::EnvConfig.no_install_upgrade? && !formula.pinned?
               name = formula.name
@@ -113,7 +122,7 @@ module Homebrew
             EOS
           end
         elsif (head && new_head_installed) || prefix_installed
-          # After we're sure that --force flag is passed for linked to opt
+          # After we're sure the --force switch was passed for linking to opt
           # keg-only we need to be sure that the version we're attempting to
           # install is not already installed.
 
@@ -134,7 +143,7 @@ module Homebrew
                 The currently linked version is: #{formula.linked_version}
               EOS
             end
-          elsif only_dependencies
+          elsif only_dependencies || (!formula.linked? && overwrite)
             msg = nil
             return true
           elsif !formula.linked? || formula.keg_only?
@@ -193,7 +202,7 @@ module Homebrew
               To upgrade to #{formula.pkg_version}, run:
                 #{unpin_cmd_if_needed}brew upgrade #{formula.full_name}
             EOS
-          elsif only_dependencies
+          elsif only_dependencies || skip_link
             return true
           else
             onoe <<~EOS
@@ -213,7 +222,7 @@ module Homebrew
         return false unless formula.opt_prefix.directory?
 
         keg = Keg.new(formula.opt_prefix.resolved_path)
-        tab = Tab.for_keg(keg)
+        tab = keg.tab
         unless tab.installed_on_request
           tab.installed_on_request = true
           tab.write
@@ -242,33 +251,37 @@ module Homebrew
         quiet: false,
         verbose: false,
         dry_run: false,
-        skip_post_install: false
+        skip_post_install: false,
+        skip_link: false
       )
-        formula_installers = formulae_to_install.map do |formula|
-          Migrator.migrate_if_needed(formula, force: force, dry_run: dry_run)
+        formula_installers = formulae_to_install.filter_map do |formula|
+          Migrator.migrate_if_needed(formula, force:, dry_run:)
           build_options = formula.build
 
           formula_installer = FormulaInstaller.new(
             formula,
             options:                    build_options.used_options,
-            build_bottle:               build_bottle,
-            force_bottle:               force_bottle,
-            bottle_arch:                bottle_arch,
-            ignore_deps:                ignore_deps,
-            only_deps:                  only_deps,
-            include_test_formulae:      include_test_formulae,
-            build_from_source_formulae: build_from_source_formulae,
-            cc:                         cc,
-            git:                        git,
-            interactive:                interactive,
-            keep_tmp:                   keep_tmp,
-            debug_symbols:              debug_symbols,
-            force:                      force,
-            overwrite:                  overwrite,
-            debug:                      debug,
-            quiet:                      quiet,
-            verbose:                    verbose,
-            skip_post_install:          skip_post_install,
+            installed_on_request:       true,
+            installed_as_dependency:    false,
+            build_bottle:,
+            force_bottle:,
+            bottle_arch:,
+            ignore_deps:,
+            only_deps:,
+            include_test_formulae:,
+            build_from_source_formulae:,
+            cc:,
+            git:,
+            interactive:,
+            keep_tmp:,
+            debug_symbols:,
+            force:,
+            overwrite:,
+            debug:,
+            quiet:,
+            verbose:,
+            skip_post_install:,
+            skip_link:,
           )
 
           begin
@@ -284,7 +297,7 @@ module Homebrew
             ofail "#{formula}: #{e}"
             nil
           end
-        end.compact
+        end
 
         if dry_run
           if (formulae_name_to_install = formulae_to_install.map(&:name))
@@ -305,36 +318,29 @@ module Homebrew
         end
       end
 
-      def print_dry_run_dependencies(formula, dependencies, &block)
+      def print_dry_run_dependencies(formula, dependencies)
         return if dependencies.empty?
 
         ohai "Would install #{Utils.pluralize("dependenc", dependencies.count, plural: "ies", singular: "y",
                                             include_count: true)} for #{formula.name}:"
-        formula_names = dependencies.map(&:first).map(&:to_formula).map(&block)
+        formula_names = dependencies.map { |(dep, _options)| yield dep.to_formula }
         puts formula_names.join(" ")
       end
 
       private
 
-      def check_cc_argv(cc)
-        return unless cc
-
-        @checks ||= Diagnostic::Checks.new
-        opoo <<~EOS
-          You passed `--cc=#{cc}`.
-          #{@checks.please_create_pull_requests}
-        EOS
+      def perform_preinstall_checks(all_fatal: false)
+        check_prefix
+        check_cpu
+        attempt_directory_creation
+        Diagnostic.checks(:supported_configuration_checks, fatal: all_fatal)
+        Diagnostic.checks(:fatal_preinstall_checks)
       end
+      alias generic_perform_preinstall_checks perform_preinstall_checks
 
       def attempt_directory_creation
-        Keg::MUST_EXIST_DIRECTORIES.each do |dir|
+        Keg.must_exist_directories.each do |dir|
           FileUtils.mkdir_p(dir) unless dir.exist?
-
-          # Create these files to ensure that these directories aren't removed
-          # by the Catalina installer.
-          # (https://github.com/Homebrew/brew/issues/6263)
-          keep_file = dir/".keepme"
-          FileUtils.touch(keep_file) unless keep_file.exist?
         rescue
           nil
         end
@@ -355,7 +361,7 @@ module Homebrew
 
         upgrade = formula.linked? && formula.outdated? && !formula.head? && !Homebrew::EnvConfig.no_install_upgrade?
 
-        Upgrade.install_formula(formula_installer, upgrade: upgrade)
+        Upgrade.install_formula(formula_installer, upgrade:)
       end
     end
   end

@@ -1,21 +1,15 @@
-#:  * `update` [<options>]
-#:
-#:  Fetch the newest version of Homebrew and all formulae from GitHub using `git`(1) and perform any necessary migrations.
-#:
-#:        --merge                      Use `git merge` to apply updates (rather than `git rebase`).
-#:        --auto-update                Run on auto-updates (e.g. before `brew install`). Skips some slower steps.
-#:    -f, --force                      Always do a slower, full update check (even if unnecessary).
-#:    -q, --quiet                      Make some output more quiet.
-#:    -v, --verbose                    Print the directories checked and `git` operations performed.
-#:    -d, --debug                      Display a trace of all shell commands as they are executed.
-#:    -h, --help                       Show this message.
+# Documentation defined in Library/Homebrew/cmd/update.rb
 
-# HOMEBREW_CURLRC, HOMEBREW_DEVELOPER, HOMEBREW_GIT_EMAIL, HOMEBREW_GIT_NAME
-# HOMEBREW_UPDATE_CLEANUP, HOMEBREW_UPDATE_TO_TAG are from the user environment
+# HOMEBREW_API_DOMAIN, HOMEBREW_CURLRC, HOMEBREW_DEBUG, HOMEBREW_DEVELOPER, HOMEBREW_GIT_EMAIL, HOMEBREW_GIT_NAME,
+# HOMEBREW_GITHUB_API_TOKEN, HOMEBREW_NO_ENV_HINTS, HOMEBREW_NO_INSTALL_CLEANUP, HOMEBREW_NO_INSTALL_FROM_API,
+# HOMEBREW_UPDATE_TO_TAG are from the user environment
 # HOMEBREW_LIBRARY, HOMEBREW_PREFIX, HOMEBREW_REPOSITORY are set by bin/brew
-# HOMEBREW_BREW_DEFAULT_GIT_REMOTE, HOMEBREW_BREW_GIT_REMOTE, HOMEBREW_CACHE, HOMEBREW_CELLAR, HOMEBREW_CURL
-# HOMEBREW_DEV_CMD_RUN, HOMEBREW_FORCE_BREWED_CURL, HOMEBREW_FORCE_BREWED_GIT, HOMEBREW_SYSTEM_CURL_TOO_OLD
-# HOMEBREW_USER_AGENT_CURL are set by brew.sh
+# HOMEBREW_API_DEFAULT_DOMAIN, HOMEBREW_AUTO_UPDATE_CASK_TAP, HOMEBREW_AUTO_UPDATE_CORE_TAP,
+# HOMEBREW_AUTO_UPDATE_SECS, HOMEBREW_BREW_DEFAULT_GIT_REMOTE, HOMEBREW_BREW_GIT_REMOTE, HOMEBREW_CACHE,
+# HOMEBREW_CASK_REPOSITORY, HOMEBREW_CELLAR, HOMEBREW_CORE_DEFAULT_GIT_REMOTE, HOMEBREW_CORE_GIT_REMOTE,
+# HOMEBREW_CORE_REPOSITORY, HOMEBREW_CURL, HOMEBREW_DEV_CMD_RUN, HOMEBREW_FORCE_BREWED_CA_CERTIFICATES,
+# HOMEBREW_FORCE_BREWED_CURL, HOMEBREW_FORCE_BREWED_GIT, HOMEBREW_LINUXBREW_CORE_MIGRATION,
+# HOMEBREW_SYSTEM_CURL_TOO_OLD, HOMEBREW_USER_AGENT_CURL are set by brew.sh
 # shellcheck disable=SC2154
 source "${HOMEBREW_LIBRARY}/Homebrew/utils/lock.sh"
 
@@ -92,18 +86,18 @@ git_init_if_necessary() {
   fi
 }
 
-repo_var() {
-  local repo_var
+repository_var_suffix() {
+  local repository_directory="${1}"
+  local repository_var_suffix
 
-  repo_var="$1"
-  if [[ "${repo_var}" == "${HOMEBREW_REPOSITORY}" ]]
+  if [[ "${repository_directory}" == "${HOMEBREW_REPOSITORY}" ]]
   then
-    repo_var=""
+    repository_var_suffix=""
   else
-    repo_var="${repo_var#"${HOMEBREW_LIBRARY}/Taps"}"
-    repo_var="$(echo -n "${repo_var}" | tr -C "A-Za-z0-9" "_" | tr "[:lower:]" "[:upper:]")"
+    repository_var_suffix="${repository_directory#"${HOMEBREW_LIBRARY}/Taps"}"
+    repository_var_suffix="$(echo -n "${repository_var_suffix}" | tr -C "A-Za-z0-9" "_" | tr "[:lower:]" "[:upper:]")"
   fi
-  echo "${repo_var}"
+  echo "${repository_var_suffix}"
 }
 
 upstream_branch() {
@@ -266,9 +260,10 @@ EOS
     then
       git checkout --force "${UPSTREAM_BRANCH}" "${QUIET_ARGS[@]}"
     else
-      if [[ -n "${UPSTREAM_TAG}" && "${UPSTREAM_BRANCH}" != "master" ]]
+      if [[ -n "${UPSTREAM_TAG}" && "${UPSTREAM_BRANCH}" != "master" ]] &&
+         [[ "${INITIAL_BRANCH}" != "master" ]]
       then
-        git checkout --force -B "master" "origin/master" "${QUIET_ARGS[@]}"
+        git branch --force "master" "origin/master" "${QUIET_ARGS[@]}"
       fi
 
       git checkout --force -B "${UPSTREAM_BRANCH}" "${REMOTE_REF}" "${QUIET_ARGS[@]}"
@@ -357,7 +352,11 @@ homebrew-update() {
         HOMEBREW_SIMULATE_FROM_CURRENT_BRANCH=1
         ;;
       --auto-update) export HOMEBREW_UPDATE_AUTO=1 ;;
-      --*) ;;
+      --*)
+        onoe "Unknown option: ${option}"
+        brew help update
+        exit 1
+        ;;
       -*)
         [[ "${option}" == *v* ]] && HOMEBREW_VERBOSE=1
         [[ "${option}" == *q* ]] && HOMEBREW_QUIET=1
@@ -378,7 +377,7 @@ EOS
     set -x
   fi
 
-  if [[ -z "${HOMEBREW_UPDATE_CLEANUP}" && -z "${HOMEBREW_UPDATE_TO_TAG}" ]]
+  if [[ -z "${HOMEBREW_UPDATE_TO_TAG}" ]]
   then
     if [[ -n "${HOMEBREW_DEVELOPER}" || -n "${HOMEBREW_DEV_CMD_RUN}" ]]
     then
@@ -395,7 +394,7 @@ EOS
 ${HOMEBREW_CELLAR} is not writable. You should change the
 ownership and permissions of ${HOMEBREW_CELLAR} back to your
 user account:
-  sudo chown -R \$(whoami) ${HOMEBREW_CELLAR}
+  sudo chown -R ${USER-\$(whoami)} ${HOMEBREW_CELLAR}
 EOS
   fi
 
@@ -411,7 +410,7 @@ EOS
 ${HOMEBREW_REPOSITORY} is not writable. You should change the
 ownership and permissions of ${HOMEBREW_REPOSITORY} back to your
 user account:
-  sudo chown -R \$(whoami) ${HOMEBREW_REPOSITORY}
+  sudo chown -R ${USER-\$(whoami)} ${HOMEBREW_REPOSITORY}
 EOS
   fi
 
@@ -497,6 +496,7 @@ EOS
 
   if [[ -z "${HOMEBREW_VERBOSE}" ]]
   then
+    export GIT_ADVICE="false"
     QUIET_ARGS=(-q)
   else
     QUIET_ARGS=()
@@ -509,15 +509,6 @@ EOS
     CURL_DISABLE_CURLRC_ARGS=(-q)
   else
     CURL_DISABLE_CURLRC_ARGS=()
-  fi
-
-  # HOMEBREW_GITHUB_API_TOKEN is optionally defined in the user environment.
-  # shellcheck disable=SC2153
-  if [[ -n "${HOMEBREW_GITHUB_API_TOKEN}" ]]
-  then
-    CURL_GITHUB_API_ARGS=("--header" "Authorization: token ${HOMEBREW_GITHUB_API_TOKEN}")
-  else
-    CURL_GITHUB_API_ARGS=()
   fi
 
   # only allow one instance of brew update
@@ -581,9 +572,10 @@ EOS
   for DIR in "${HOMEBREW_REPOSITORY}" "${HOMEBREW_LIBRARY}"/Taps/*/*
   do
     if [[ -z "${HOMEBREW_NO_INSTALL_FROM_API}" ]] &&
-       [[ -z "${HOMEBREW_DEVELOPER}" && -z "${HOMEBREW_DEV_CMD_RUN}" || -n "${HOMEBREW_UPDATE_AUTO}" ]] &&
-       [[ ("${DIR}" == "${HOMEBREW_CORE_REPOSITORY}" && -z "${HOMEBREW_UPDATE_CORE_TAP}") ||
-          ("${DIR}" == "${HOMEBREW_CASK_REPOSITORY}" && -z "${HOMEBREW_UPDATE_CASK_TAP}") ]]
+       [[ -n "${HOMEBREW_UPDATE_AUTO}" || (-z "${HOMEBREW_DEVELOPER}" && -z "${HOMEBREW_DEV_CMD_RUN}") ]] &&
+       [[ -n "${HOMEBREW_UPDATE_AUTO}" &&
+          (("${DIR}" == "${HOMEBREW_CORE_REPOSITORY}" && -z "${HOMEBREW_AUTO_UPDATE_CORE_TAP}") ||
+          ("${DIR}" == "${HOMEBREW_CASK_REPOSITORY}" && -z "${HOMEBREW_AUTO_UPDATE_CASK_TAP}")) ]]
     then
       continue
     fi
@@ -608,7 +600,7 @@ EOS
       echo "Checking if we need to fetch ${DIR}..."
     fi
 
-    TAP_VAR="$(repo_var "${DIR}")"
+    TAP_VAR="$(repository_var_suffix "${DIR}")"
     UPSTREAM_BRANCH_DIR="$(upstream_branch)"
     declare UPSTREAM_BRANCH"${TAP_VAR}"="${UPSTREAM_BRANCH_DIR}"
     declare PREFETCH_REVISION"${TAP_VAR}"="$(git rev-parse -q --verify refs/remotes/origin/"${UPSTREAM_BRANCH_DIR}")"
@@ -630,12 +622,34 @@ EOS
       [[ -n "${SKIP_FETCH_CORE_REPOSITORY}" && "${DIR}" == "${HOMEBREW_CORE_REPOSITORY}" ]] && continue
     fi
 
+    if [[ -z "${UPDATING_MESSAGE_SHOWN}" ]]
+    then
+      if [[ -n "${HOMEBREW_UPDATE_AUTO}" ]]
+      then
+        # Outputting a command but don't want to run it, hence single quotes.
+        # shellcheck disable=SC2016
+        ohai 'Auto-updating Homebrew...' >&2
+        if [[ -z "${HOMEBREW_NO_ENV_HINTS}" && -z "${HOMEBREW_AUTO_UPDATE_SECS}" ]]
+        then
+          # shellcheck disable=SC2016
+          echo 'Adjust how often this is run with HOMEBREW_AUTO_UPDATE_SECS or disable with' >&2
+          # shellcheck disable=SC2016
+          echo 'HOMEBREW_NO_AUTO_UPDATE. Hide these hints with HOMEBREW_NO_ENV_HINTS (see `man brew`).' >&2
+        fi
+      else
+        ohai 'Updating Homebrew...' >&2
+      fi
+      UPDATING_MESSAGE_SHOWN=1
+    fi
+
     # The upstream repository's default branch may not be master;
     # check refs/remotes/origin/HEAD to see what the default
     # origin branch name is, and use that. If not set, fall back to "master".
     # the refspec ensures that the default upstream branch gets updated
     (
       UPSTREAM_REPOSITORY_URL="$(git config remote.origin.url)"
+      unset UPSTREAM_REPOSITORY
+      unset UPSTREAM_REPOSITORY_TOKEN
 
       # HOMEBREW_UPDATE_FORCE and HOMEBREW_UPDATE_AUTO aren't modified here so ignore subshell warning.
       # shellcheck disable=SC2030
@@ -643,6 +657,27 @@ EOS
       then
         UPSTREAM_REPOSITORY="${UPSTREAM_REPOSITORY_URL#https://github.com/}"
         UPSTREAM_REPOSITORY="${UPSTREAM_REPOSITORY%.git}"
+      elif [[ "${DIR}" != "${HOMEBREW_REPOSITORY}" ]] &&
+           [[ "${UPSTREAM_REPOSITORY_URL}" =~ https://([[:alnum:]_:]+)@github.com/(.*)$ ]]
+      then
+        UPSTREAM_REPOSITORY="${BASH_REMATCH[2]%.git}"
+        UPSTREAM_REPOSITORY_TOKEN="${BASH_REMATCH[1]#*:}"
+      fi
+
+      if [[ -n "${UPSTREAM_REPOSITORY}" ]]
+      then
+        # UPSTREAM_REPOSITORY_TOKEN is parsed (if exists) from UPSTREAM_REPOSITORY_URL
+        # HOMEBREW_GITHUB_API_TOKEN is optionally defined in the user environment.
+        # shellcheck disable=SC2153
+        if [[ -n "${UPSTREAM_REPOSITORY_TOKEN}" ]]
+        then
+          CURL_GITHUB_API_ARGS=("--header" "Authorization: token ${UPSTREAM_REPOSITORY_TOKEN}")
+        elif [[ -n "${HOMEBREW_GITHUB_API_TOKEN}" ]]
+        then
+          CURL_GITHUB_API_ARGS=("--header" "Authorization: token ${HOMEBREW_GITHUB_API_TOKEN}")
+        else
+          CURL_GITHUB_API_ARGS=()
+        fi
 
         if [[ "${DIR}" == "${HOMEBREW_REPOSITORY}" && -n "${HOMEBREW_UPDATE_TO_TAG}" ]]
         then
@@ -678,14 +713,6 @@ EOS
         # Touch FETCH_HEAD to confirm we've checked for an update.
         [[ -f "${DIR}/.git/FETCH_HEAD" ]] && touch "${DIR}/.git/FETCH_HEAD"
         [[ -z "${HOMEBREW_UPDATE_FORCE}" ]] && [[ "${UPSTREAM_SHA_HTTP_CODE}" == "304" ]] && exit
-      elif [[ -n "${HOMEBREW_UPDATE_AUTO}" ]]
-      then
-        FORCE_AUTO_UPDATE="$(git config homebrew.forceautoupdate 2>/dev/null || echo "false")"
-        if [[ "${FORCE_AUTO_UPDATE}" != "true" ]]
-        then
-          # Don't try to do a `git fetch` that may take longer than expected.
-          exit
-        fi
       fi
 
       # HOMEBREW_VERBOSE isn't modified here so ignore subshell warning.
@@ -743,9 +770,10 @@ EOS
   for DIR in "${HOMEBREW_REPOSITORY}" "${HOMEBREW_LIBRARY}"/Taps/*/*
   do
     if [[ -z "${HOMEBREW_NO_INSTALL_FROM_API}" ]] &&
-       [[ -z "${HOMEBREW_DEVELOPER}" && -z "${HOMEBREW_DEV_CMD_RUN}" || -n "${HOMEBREW_UPDATE_AUTO}" ]] &&
-       [[ ("${DIR}" == "${HOMEBREW_CORE_REPOSITORY}" && -z "${HOMEBREW_UPDATE_CORE_TAP}") ||
-          ("${DIR}" == "${HOMEBREW_CASK_REPOSITORY}" && -z "${HOMEBREW_UPDATE_CASK_TAP}") ]]
+       [[ -n "${HOMEBREW_UPDATE_AUTO}" || (-z "${HOMEBREW_DEVELOPER}" && -z "${HOMEBREW_DEV_CMD_RUN}") ]] &&
+       [[ -n "${HOMEBREW_UPDATE_AUTO}" &&
+          (("${DIR}" == "${HOMEBREW_CORE_REPOSITORY}" && -z "${HOMEBREW_AUTO_UPDATE_CORE_TAP}") ||
+          ("${DIR}" == "${HOMEBREW_CASK_REPOSITORY}" && -z "${HOMEBREW_AUTO_UPDATE_CASK_TAP}")) ]]
     then
       continue
     fi
@@ -758,7 +786,7 @@ EOS
       continue
     fi
 
-    TAP_VAR="$(repo_var "${DIR}")"
+    TAP_VAR="$(repository_var_suffix "${DIR}")"
     UPSTREAM_BRANCH_VAR="UPSTREAM_BRANCH${TAP_VAR}"
     UPSTREAM_BRANCH="${!UPSTREAM_BRANCH_VAR}"
     CURRENT_REVISION="$(read_current_revision)"
@@ -781,7 +809,6 @@ EOS
       export HOMEBREW_UPDATE_AFTER"${TAP_VAR}"="${CURRENT_REVISION}"
     else
       merge_or_rebase "${DIR}" "${TAP_VAR}" "${UPSTREAM_BRANCH}"
-      [[ -n "${HOMEBREW_VERBOSE}" ]] && echo
     fi
   done
 
@@ -797,6 +824,11 @@ EOS
       if [[ -f "${cache_path}" ]]
       then
         INITIAL_JSON_BYTESIZE="$(wc -c "${cache_path}")"
+      fi
+
+      if [[ -n "${HOMEBREW_VERBOSE}" ]]
+      then
+        echo "Checking if we need to fetch ${filename}..."
       fi
 
       JSON_URLS=()
@@ -846,6 +878,11 @@ EOS
             rm -f "${api_cache}/formula_aliases.txt"
           fi
           HOMEBREW_UPDATED="1"
+
+          if [[ -n "${HOMEBREW_VERBOSE}" ]]
+          then
+            echo "Updated ${filename}."
+          fi
         fi
       else
         echo "Failed to download ${json_url}!" >>"${update_failed_file}"
@@ -855,6 +892,11 @@ EOS
 
     # Not a typo, these are the files we used to download that no longer need so should cleanup.
     rm -f "${HOMEBREW_CACHE}/api/formula.json" "${HOMEBREW_CACHE}/api/cask.json"
+  else
+    if [[ -n "${HOMEBREW_VERBOSE}" ]]
+    then
+      echo "HOMEBREW_NO_INSTALL_FROM_API set: skipping API JSON downloads."
+    fi
   fi
 
   if [[ -f "${update_failed_file}" ]]

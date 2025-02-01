@@ -1,13 +1,13 @@
-# typed: true
+# typed: strict
 # frozen_string_literal: true
-
-# Apple's gzip also uses zlib so use the same buffer size here.
-# https://github.com/apple-oss-distributions/file_cmds/blob/file_cmds-400/gzip/gzip.c#L147
-GZIP_BUFFER_SIZE = 64 * 1024
 
 module Utils
   # Helper functions for creating gzip files.
   module Gzip
+    # Apple's gzip also uses zlib so use the same buffer size here.
+    # https://github.com/apple-oss-distributions/file_cmds/blob/file_cmds-400/gzip/gzip.c#L147
+    GZIP_BUFFER_SIZE = T.let(64 * 1024, Integer)
+
     sig {
       params(
         path:      T.any(String, Pathname),
@@ -54,7 +54,7 @@ module Utils
     def self.compress(*paths, reproducible: true, mtime: ENV["SOURCE_DATE_EPOCH"].to_i)
       if reproducible
         paths.map do |path|
-          compress_with_options(path, mtime: mtime)
+          compress_with_options(path, mtime:)
         end
       else
         paths.map do |path|

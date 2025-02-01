@@ -1,4 +1,4 @@
-# typed: true
+# typed: strict
 # frozen_string_literal: true
 
 require "forwardable"
@@ -8,23 +8,27 @@ module RuboCop
     module Cask
       # This cop audits variables in casks.
       #
-      # @example
-      #   # bad
-      #   cask do
-      #     arch = Hardware::CPU.intel? ? "darwin" : "darwin-arm64"
-      #   end
+      # ### Example
       #
-      #   # good
-      #   cask 'foo' do
-      #     arch arm: "darwin-arm64", intel: "darwin"
-      #   end
+      # ```ruby
+      # # bad
+      # cask do
+      #   arch = Hardware::CPU.intel? ? "darwin" : "darwin-arm64"
+      # end
+      #
+      # # good
+      # cask 'foo' do
+      #   arch arm: "darwin-arm64", intel: "darwin"
+      # end
+      # ```
       class Variables < Base
         extend Forwardable
         extend AutoCorrector
         include CaskHelp
 
+        sig { override.params(cask_block: RuboCop::Cask::AST::CaskBlock).void }
         def on_cask(cask_block)
-          @cask_block = cask_block
+          @cask_block = T.let(cask_block, T.nilable(RuboCop::Cask::AST::CaskBlock))
           add_offenses
         end
 
@@ -32,6 +36,7 @@ module RuboCop
 
         def_delegator :@cask_block, :cask_node
 
+        sig { void }
         def add_offenses
           variable_assignment(cask_node) do |node, var_name, arch_condition, true_node, false_node|
             arm_node, intel_node = if arch_condition == :arm?
@@ -56,10 +61,11 @@ module RuboCop
           end
         end
 
+        sig { params(node: RuboCop::AST::Node).returns(T::Boolean) }
         def blank_node?(node)
           case node.type
           when :str
-            node.value.empty?
+            node.str_content.empty?
           when :nil
             true
           else

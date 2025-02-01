@@ -1,4 +1,4 @@
-# typed: true
+# typed: true # rubocop:todo Sorbet/StrictSigil
 # frozen_string_literal: true
 
 require "macos_version"
@@ -10,15 +10,23 @@ require "os/mac/keg"
 module OS
   # Helper module for querying system information on macOS.
   module Mac
-    ::MacOS = OS::Mac
-
     raise "Loaded OS::Mac on generic OS!" if ENV["HOMEBREW_TEST_GENERIC_OS"]
+
+    # This check is the only acceptable or necessary one in this file.
+    # rubocop:disable Homebrew/MoveToExtendOS
+    raise "Loaded OS::Mac on Linux!" if OS.linux?
+    # rubocop:enable Homebrew/MoveToExtendOS
+
+    # Provide MacOS alias for backwards compatibility and nicer APIs.
+    ::MacOS = OS::Mac
 
     VERSION = ENV.fetch("HOMEBREW_MACOS_VERSION").chomp.freeze
     private_constant :VERSION
 
     # This can be compared to numerics, strings, or symbols
     # using the standard Ruby Comparable methods.
+    #
+    # @api internal
     sig { returns(MacOSVersion) }
     def self.version
       @version ||= full_version.strip_patch
@@ -26,10 +34,12 @@ module OS
 
     # This can be compared to numerics, strings, or symbols
     # using the standard Ruby Comparable methods.
+    #
+    # @api internal
     sig { returns(MacOSVersion) }
     def self.full_version
-      @full_version ||= if ENV["HOMEBREW_FAKE_EL_CAPITAN"] # for Portable Ruby building
-        MacOSVersion.new("10.11.6")
+      @full_version ||= if (fake_macos = ENV.fetch("HOMEBREW_FAKE_MACOS", nil)) # for Portable Ruby building
+        MacOSVersion.new(fake_macos)
       else
         MacOSVersion.new(VERSION)
       end
@@ -45,7 +55,7 @@ module OS
     def self.latest_sdk_version
       # TODO: bump version when new Xcode macOS SDK is released
       # NOTE: We only track the major version of the SDK.
-      ::Version.new("13")
+      ::Version.new("15")
     end
 
     sig { returns(String) }
@@ -59,6 +69,7 @@ module OS
       end
     end
 
+    sig { returns(T::Array[String]) }
     def self.languages
       return @languages if @languages
 
@@ -185,10 +196,15 @@ module OS
 
     sig { params(ids: String).returns(T.nilable(Pathname)) }
     def self.app_with_bundle_id(*ids)
-      path = mdfind(*ids)
-             .reject { |p| p.include?("/Backups.backupdb/") }
-             .first
-      Pathname.new(path) if path.present?
+      require "bundle_version"
+
+      paths = mdfind(*ids).filter_map do |bundle_path|
+        Pathname.new(bundle_path) if bundle_path.exclude?("/Backups.backupdb/")
+      end
+      return paths.first unless paths.all? { |bp| (bp/"Contents/Info.plist").exist? }
+
+      # Prefer newest one, if we can find it.
+      paths.max_by { |bundle_path| Homebrew::BundleVersion.from_info_plist(bundle_path/"Contents/Info.plist") }
     end
 
     sig { params(ids: String).returns(T::Array[String]) }
